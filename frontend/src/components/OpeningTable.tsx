@@ -2,7 +2,6 @@
 
 import React, { useState } from "react";
 import { OpeningStats } from "@/lib/types";
-import { BookOpen, Trophy, ArrowUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface OpeningTableProps {
@@ -18,8 +17,8 @@ export default function OpeningTable({
 }: OpeningTableProps) {
   const [activeTab, setActiveTab] = useState<"white" | "black">("white");
   const [sortBy, setSortBy] = useState<"games" | "win_rate">("games");
+  const [expanded, setExpanded] = useState(false);
 
-  // Fallback if white/black specific repertoire is empty
   const activeList =
     activeTab === "white"
       ? whiteOpenings.length > 0
@@ -33,68 +32,86 @@ export default function OpeningTable({
     if (sortBy === "win_rate") {
       return (b.win_rate || 0) - (a.win_rate || 0);
     }
-    const gamesA = a.games ?? (a as any).count ?? 0;
-    const gamesB = b.games ?? (b as any).count ?? 0;
+    const gamesA = a.games ?? a.count ?? 0;
+    const gamesB = b.games ?? b.count ?? 0;
     return gamesB - gamesA;
   });
 
+  const ROW_LIMIT = 12;
+  const visibleOpenings = expanded
+    ? sortedOpenings
+    : sortedOpenings.slice(0, ROW_LIMIT);
+  const hiddenCount = sortedOpenings.length - visibleOpenings.length;
+
+  const selectTab = (tab: "white" | "black") => {
+    setActiveTab(tab);
+    setExpanded(false);
+  };
+
+  const toggleSort = () => {
+    setSortBy((prev) => (prev === "games" ? "win_rate" : "games"));
+    setExpanded(false);
+  };
+
+  const tabClass = (active: boolean) =>
+    cn(
+      "px-2 py-1 font-mono text-[10px] tracking-wider transition-colors",
+      active
+        ? "bg-term-raised text-term-green"
+        : "text-term-faint hover:text-term-text"
+    );
+
   return (
     <div className="w-full">
-      {/* Tab Switcher & Sorting Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800">
-        <div className="flex items-center gap-2 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1 border border-term-line bg-term-panel">
           <button
-            onClick={() => setActiveTab("white")}
-            className={cn(
-              "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
-              activeTab === "white"
-                ? "bg-slate-100 text-slate-900 shadow"
-                : "text-slate-400 hover:text-slate-200"
-            )}
+            onClick={() => selectTab("white")}
+            className={tabClass(activeTab === "white")}
           >
-            <span className="w-2.5 h-2.5 rounded-full bg-slate-200 border border-slate-400" />
-            As White ({whiteOpenings.length || generalOpenings.length})
+            [WHITE {whiteOpenings.length || generalOpenings.length}]
           </button>
           <button
-            onClick={() => setActiveTab("black")}
-            className={cn(
-              "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
-              activeTab === "black"
-                ? "bg-slate-800 text-white shadow border border-slate-700"
-                : "text-slate-400 hover:text-slate-200"
-            )}
+            onClick={() => selectTab("black")}
+            className={tabClass(activeTab === "black")}
           >
-            <span className="w-2.5 h-2.5 rounded-full bg-slate-900 border border-slate-600" />
-            As Black ({blackOpenings.length || generalOpenings.length})
+            [BLACK {blackOpenings.length || generalOpenings.length}]
           </button>
         </div>
 
         <button
-          onClick={() => setSortBy((prev) => (prev === "games" ? "win_rate" : "games"))}
-          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg bg-slate-800/40 hover:bg-slate-800 transition-colors"
+          onClick={toggleSort}
+          className="border border-term-line px-2 py-1 font-mono text-[10px] tracking-wider text-term-muted transition-colors hover:border-term-line-bright hover:text-term-text"
         >
-          <ArrowUpDown className="w-3.5 h-3.5" />
-          <span>Sort: {sortBy === "games" ? "Most Played" : "Highest Win%"}</span>
+          SORT: {sortBy === "games" ? "GAMES" : "WIN%"}
         </button>
       </div>
 
       {sortedOpenings.length === 0 ? (
-        <div className="p-8 text-center text-slate-500 text-sm">
-          No opening data available for this side.
-        </div>
+        <p className="border border-term-line px-3 py-6 text-center font-mono text-[11px] text-term-faint">
+          // no opening data for this side
+        </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+        <div className="overflow-x-auto border border-term-line">
+          <table className="w-full text-left">
             <thead>
-              <tr className="text-slate-400 text-xs uppercase tracking-wider border-b border-slate-800/80">
-                <th className="pb-2.5 font-medium pl-1">ECO</th>
-                <th className="pb-2.5 font-medium">Opening Name</th>
-                <th className="pb-2.5 font-medium text-center">Games</th>
-                <th className="pb-2.5 font-medium text-right pr-2">Outcome Distribution</th>
+              <tr className="border-b border-term-line bg-term-raised">
+                {["ECO", "OPENING", "G", "W / D / L"].map((header) => (
+                  <th
+                    key={header}
+                    className={cn(
+                      "px-3 py-2 font-mono text-[9px] font-medium tracking-wider text-term-faint",
+                      header === "G" && "text-center",
+                      header === "W / D / L" && "text-right"
+                    )}
+                  >
+                    {header}
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/40">
-              {sortedOpenings.map((opening) => {
+            <tbody>
+              {visibleOpenings.map((opening) => {
                 const winPct = Math.round((opening.win_rate || 0) * 100);
                 const drawPct = Math.round((opening.draw_rate || 0) * 100);
                 const lossPct = Math.max(0, 100 - winPct - drawPct);
@@ -102,42 +119,38 @@ export default function OpeningTable({
                 return (
                   <tr
                     key={opening.eco + opening.name}
-                    className="hover:bg-slate-800/30 transition-colors group"
+                    className="border-b border-term-line/70 transition-colors last:border-b-0 hover:bg-term-raised"
                   >
-                    <td className="py-2.5 pl-1 font-mono text-xs font-semibold text-primary-300">
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-[10px] text-term-green">
                       {opening.eco || "N/A"}
                     </td>
-                    <td className="py-2.5 font-medium text-slate-200 max-w-xs truncate">
-                      {opening.name || "Custom Opening"}
+                    <td className="max-w-[22rem] truncate px-3 py-2 text-[12px] text-term-text/85">
+                      {opening.name || "Custom opening"}
                     </td>
-                    <td className="py-2.5 text-center text-slate-400 font-mono text-xs">
-                      {opening.games ?? (opening as any).count ?? 0}
+                    <td className="px-3 py-2 text-center font-mono text-[10px] text-term-muted">
+                      {opening.games ?? opening.count ?? 0}
                     </td>
-                    <td className="py-2.5 pr-2">
+                    <td className="px-3 py-2">
                       <div className="flex flex-col items-end gap-1">
-                        <div className="flex items-center gap-2 text-xs font-mono">
-                          <span className="text-emerald-400 font-semibold">{winPct}% W</span>
-                          <span className="text-slate-500">/</span>
-                          <span className="text-slate-400">{drawPct}% D</span>
-                          <span className="text-slate-500">/</span>
-                          <span className="text-rose-400">{lossPct}% L</span>
+                        <div className="flex items-center gap-1 font-mono text-[10px]">
+                          <span className="text-term-green">{winPct}</span>
+                          <span className="text-term-faint">/</span>
+                          <span className="text-term-muted">{drawPct}</span>
+                          <span className="text-term-faint">/</span>
+                          <span className="text-term-red">{lossPct}</span>
                         </div>
-                        {/* Outcome Proportional Bar */}
-                        <div className="flex w-36 h-1.5 rounded-full overflow-hidden bg-slate-800">
+                        <div className="flex h-1 w-28 overflow-hidden bg-term-line">
                           <div
                             style={{ width: `${winPct}%` }}
-                            className="bg-emerald-500 h-full"
-                            title={`Win: ${winPct}%`}
+                            className="h-full bg-term-green"
                           />
                           <div
                             style={{ width: `${drawPct}%` }}
-                            className="bg-slate-500 h-full"
-                            title={`Draw: ${drawPct}%`}
+                            className="h-full bg-term-faint"
                           />
                           <div
                             style={{ width: `${lossPct}%` }}
-                            className="bg-rose-500 h-full"
-                            title={`Loss: ${lossPct}%`}
+                            className="h-full bg-term-red"
                           />
                         </div>
                       </div>
@@ -149,7 +162,23 @@ export default function OpeningTable({
           </table>
         </div>
       )}
+
+      {sortedOpenings.length > ROW_LIMIT && (
+        <button
+          onClick={() => setExpanded((prev) => !prev)}
+          className="mt-2 flex w-full items-center justify-between border border-term-line px-3 py-1.5 font-mono text-[10px] tracking-wider text-term-muted transition-colors hover:border-term-line-bright hover:text-term-text"
+          aria-expanded={expanded}
+        >
+          <span>
+            {expanded
+              ? "[ COLLAPSE ]"
+              : `[ SHOW ALL +${hiddenCount} ]`}
+          </span>
+          <span className="text-term-faint">
+            {visibleOpenings.length} / {sortedOpenings.length} ROWS
+          </span>
+        </button>
+      )}
     </div>
   );
 }
-

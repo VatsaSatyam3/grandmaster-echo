@@ -32,10 +32,28 @@ class Settings(BaseSettings):
     # ── OpenAI / LLM ─────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
 
+    # ── Groq (OpenAI-compatible fallback for fast structured output) ─────
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+
     # ── Langfuse observability (optional) ─────────────────────────────────
     LANGFUSE_PUBLIC_KEY: str | None = None
     LANGFUSE_SECRET_KEY: str | None = None
     LANGFUSE_HOST: str | None = None
+
+    # ── Gemini (primary LLM + embeddings) ─────────────────────────────────
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
+
+    # ── Qdrant vector store (RAG over player move histories) ──────────────
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str | None = None
+    QDRANT_COLLECTION: str = "grandmaster_echo_moves"
+    ENABLE_RAG: bool = True
+    RAG_TOP_K: int = 5
+    EMBEDDING_DIM: int = 768
 
     # ── External chess APIs ───────────────────────────────────────────────
     CHESS_COM_API_BASE: str = "https://api.chess.com/pub/player"

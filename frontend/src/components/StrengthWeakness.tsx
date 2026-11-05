@@ -1,11 +1,45 @@
 "use client";
 
 import React from "react";
-import { CheckCircle2, AlertTriangle, ShieldCheck, ZapOff } from "lucide-react";
 
 interface StrengthWeaknessProps {
   strengths: string[];
   weaknesses: string[];
+}
+
+function ItemList({
+  items,
+  marker,
+  markerClass,
+  empty,
+}: {
+  items: string[];
+  marker: string;
+  markerClass: string;
+  empty: string;
+}) {
+  return (
+    <ul className="mt-3 space-y-2">
+      {items.length === 0 ? (
+        <li className="font-mono text-[11px] text-term-faint">{empty}</li>
+      ) : (
+        items.map((item, index) => (
+          <li
+            key={index}
+            className="flex items-start gap-2.5 text-[12.5px] leading-5 text-term-text/80"
+          >
+            <span
+              aria-hidden
+              className={`mt-px shrink-0 font-mono text-[11px] ${markerClass}`}
+            >
+              {marker}
+            </span>
+            <span>{item}</span>
+          </li>
+        ))
+      )}
+    </ul>
+  );
 }
 
 export default function StrengthWeakness({
@@ -13,47 +47,29 @@ export default function StrengthWeakness({
   weaknesses,
 }: StrengthWeaknessProps) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {/* Strengths Column */}
-      <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/10 p-4">
-        <div className="flex items-center gap-2 mb-3 text-emerald-400 font-semibold text-sm uppercase tracking-wider">
-          <ShieldCheck className="w-4 h-4" />
-          <span>Calculated Strengths</span>
-        </div>
-        <ul className="space-y-2.5">
-          {strengths.length === 0 ? (
-            <li className="text-xs text-slate-500 italic">No specific strengths identified.</li>
-          ) : (
-            strengths.map((str, idx) => (
-              <li key={idx} className="flex items-start gap-2.5 text-xs text-slate-300">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <span className="leading-relaxed">{str}</span>
-              </li>
-            ))
-          )}
-        </ul>
+    <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+      <div>
+        <p className="font-mono text-[10px] tracking-wider text-term-green">
+          [+] STRENGTHS
+        </p>
+        <ItemList
+          items={strengths}
+          marker="+"
+          markerClass="text-term-green"
+          empty="// none identified"
+        />
       </div>
-
-      {/* Weaknesses Column */}
-      <div className="rounded-xl border border-rose-500/20 bg-rose-950/10 p-4">
-        <div className="flex items-center gap-2 mb-3 text-rose-400 font-semibold text-sm uppercase tracking-wider">
-          <ZapOff className="w-4 h-4" />
-          <span>Fatal Vulnerabilities</span>
-        </div>
-        <ul className="space-y-2.5">
-          {weaknesses.length === 0 ? (
-            <li className="text-xs text-slate-500 italic">No critical vulnerabilities detected.</li>
-          ) : (
-            weaknesses.map((weak, idx) => (
-              <li key={idx} className="flex items-start gap-2.5 text-xs text-slate-300">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <span className="leading-relaxed">{weak}</span>
-              </li>
-            ))
-          )}
-        </ul>
+      <div className="md:border-l md:border-term-line md:pl-5">
+        <p className="font-mono text-[10px] tracking-wider text-term-red">
+          [−] FAILURES
+        </p>
+        <ItemList
+          items={weaknesses}
+          marker="−"
+          markerClass="text-term-red"
+          empty="// none detected"
+        />
       </div>
     </div>
   );
 }
-

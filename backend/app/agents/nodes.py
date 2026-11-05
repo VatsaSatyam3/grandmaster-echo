@@ -3,10 +3,10 @@ LangGraph agent nodes for the Grandmaster Echo profiler.
 
 Each node:
 1. Takes the ``ProfilerState`` as input (via a dict representation).
-2. Calls an LLM with a specialised chess-expert system prompt plus the
-   relevant slice of statistical data.
-3. Parses the LLM output into a strict Pydantic schema using
-   ``model.with_structured_output()``.
+2. Calls the unified LLM provider (Gemini primary, OpenAI fallback) with a
+   specialised chess-expert system prompt plus the relevant slice of
+   statistical data and retrieved RAG context.
+3. Parses the LLM output into a strict Pydantic schema.
 4. Returns a dict of state updates.
 5. Is decorated with Langfuse ``@observe()`` for full trace visibility.
 """
@@ -16,9 +16,6 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
-
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 try:
     from langfuse import observe
@@ -37,13 +34,12 @@ from app.agents.schemas import (
     ProfilerState,
     TacticalAudit,
 )
+from app.services.llm import provider
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-_MODEL_FAST = "gpt-4o-mini"
-_MODEL_QUALITY = "gpt-4o"
 _TEMPERATURE = 0.3  # low temperature for analytical consistency
 
 
@@ -51,8 +47,58 @@ _TEMPERATURE = 0.3  # low temperature for analytical consistency
 
 
 def _dump(obj: Any) -> str:
-    """Compact JSON serialisation for feeding data to the LLM."""
-    return json.dumps(obj, indent=2, default=str)
+    """Compact JSON serialisation for feeding data to the LLM.
+
+    Compact separators matter on providers with small per-minute token
+    budgets (e.g. Groq's free tier), where verbose pretty-printed JSON can
+    push a request over the limit.
+    """
+    return json.dumps(obj, separators=(",", ":"), default=str)
+
+
+def _state_dict(state: Any) -> dict[str, Any]:
+    """Normalise LangGraph state to a dict.
+
+    Depending on the LangGraph version, nodes may receive the Pydantic state
+    model directly instead of a plain dict.  Normalising here keeps the node
+    implementations simple and version-tolerant.
+    """
+    if isinstance(state, dict):
+        return state
+    if hasattr(state, "model_dump"):
+        return state.model_dump()
+    return dict(state)
+
+
+def _rag_block(state: dict) -> str:
+    """Render the retrieved move-history context for prompt grounding."""
+    context = state.get("rag_context") or []
+    if not context:
+        return (
+            "\n\n## Retrieved Similar Games (RAG)\n"
+            "No retrieved games were available for this player."
+        )
+
+    # Keep the grounding evidence compact: three games is enough to anchor
+    # the narrative and stays inside free-tier token budgets.
+    compact = [
+        {
+            "game_id": item.get("game_id"),
+            "opening": item.get("opening"),
+            "eco": item.get("eco"),
+            "result": item.get("result"),
+            "played_as": item.get("played_as"),
+            "similarity": item.get("similarity"),
+            "excerpt": str(item.get("excerpt", ""))[:240],
+        }
+        for item in context[:3]
+    ]
+    return (
+        "\n\n## Retrieved Similar Games (RAG)\n"
+        "These are the player's own games retrieved by semantic similarity. "
+        "Ground every tactical claim in this evidence and cite game ids.\n"
+        f"```json\n{_dump(compact)}\n```"
+    )
 
 
 # ── Node 1: Opening Analyst ─────────────────────────────────────────────────
@@ -116,24 +162,23 @@ async def opening_analyst_node(state: dict) -> dict:
     dict
         State update containing ``opening_analysis``.
     """
+    state = _state_dict(state)
     logger.info("Opening Analyst node started for user=%s", state.get("username"))
 
     try:
-        llm = ChatOpenAI(model=_MODEL_FAST, temperature=_TEMPERATURE)
-        structured_llm = llm.with_structured_output(OpeningAnalysis)
-
         human_content = (
             f"Player: {state.get('username', 'unknown')} on {state.get('platform', 'unknown')}\n"
             f"Total games analysed: {state.get('total_games', 0)}\n\n"
-            f"## Opening Statistics\n```json\n{_dump(state.get('opening_stats', []))}\n```\n\n"
+            f"## Opening Statistics (top 10)\n```json\n{_dump(state.get('opening_stats', [])[:10])}\n```\n\n"
             f"## Colour Statistics\n```json\n{_dump(state.get('color_stats', {}))}\n```"
+            f"{_rag_block(state)}"
         )
 
-        result: OpeningAnalysis = await structured_llm.ainvoke(
-            [
-                SystemMessage(content=_OPENING_SYSTEM_PROMPT),
-                HumanMessage(content=human_content),
-            ]
+        result: OpeningAnalysis = await provider.structured(
+            system=_OPENING_SYSTEM_PROMPT,
+            human=human_content,
+            schema=OpeningAnalysis,
+            temperature=_TEMPERATURE,
         )
 
         logger.info("Opening Analyst node completed successfully")
@@ -142,7 +187,7 @@ async def opening_analyst_node(state: dict) -> dict:
     except Exception as exc:
         error_msg = f"Opening Analyst failed: {exc!s}"
         logger.exception(error_msg)
-        return {"errors": state.get("errors", []) + [error_msg]}
+        return {"errors": [error_msg]}
 
 
 # ── Node 2: Tactical Auditor ────────────────────────────────────────────────
@@ -216,24 +261,23 @@ async def tactical_auditor_node(state: dict) -> dict:
     dict
         State update containing ``tactical_audit``.
     """
+    state = _state_dict(state)
     logger.info("Tactical Auditor node started for user=%s", state.get("username"))
 
     try:
-        llm = ChatOpenAI(model=_MODEL_FAST, temperature=_TEMPERATURE)
-        structured_llm = llm.with_structured_output(TacticalAudit)
-
         human_content = (
             f"Player: {state.get('username', 'unknown')} on {state.get('platform', 'unknown')}\n"
             f"Total games analysed: {state.get('total_games', 0)}\n\n"
             f"## Engine Statistics (Aggregate)\n```json\n{_dump(state.get('engine_stats', {}))}\n```\n\n"
-            f"## Per-Game Analyses\n```json\n{_dump(state.get('game_analyses', []))}\n```"
+            f"## Per-Game Analyses (sample)\n```json\n{_dump(state.get('game_analyses', [])[:10])}\n```"
+            f"{_rag_block(state)}"
         )
 
-        result: TacticalAudit = await structured_llm.ainvoke(
-            [
-                SystemMessage(content=_TACTICAL_SYSTEM_PROMPT),
-                HumanMessage(content=human_content),
-            ]
+        result: TacticalAudit = await provider.structured(
+            system=_TACTICAL_SYSTEM_PROMPT,
+            human=human_content,
+            schema=TacticalAudit,
+            temperature=_TEMPERATURE,
         )
 
         logger.info("Tactical Auditor node completed successfully")
@@ -242,7 +286,7 @@ async def tactical_auditor_node(state: dict) -> dict:
     except Exception as exc:
         error_msg = f"Tactical Auditor failed: {exc!s}"
         logger.exception(error_msg)
-        return {"errors": state.get("errors", []) + [error_msg]}
+        return {"errors": [error_msg]}
 
 
 # ── Node 3: Synthesis Writer ────────────────────────────────────────────────
@@ -266,6 +310,9 @@ You will receive:
   competence, and a narrative.
 • **engine_stats** – raw aggregate engine statistics for additional context.
 • **total_games** – the number of games in the dataset.
+• **retrieved_games** – the player's own games retrieved by semantic search.
+  Use them to ground tactical claims and reference concrete game ids when
+  they support a point. Never invent games that are absent from this list.
 
 Follow these steps:
 
@@ -329,12 +376,10 @@ async def synthesis_writer_node(state: dict) -> dict:
     dict
         State update containing ``player_synthesis``.
     """
+    state = _state_dict(state)
     logger.info("Synthesis Writer node started for user=%s", state.get("username"))
 
     try:
-        llm = ChatOpenAI(model=_MODEL_QUALITY, temperature=_TEMPERATURE)
-        structured_llm = llm.with_structured_output(PlayerSynthesis)
-
         # Serialise upstream node outputs — they may be Pydantic models or
         # already dicts depending on LangGraph's internal handling.
         opening_raw = state.get("opening_analysis")
@@ -355,13 +400,14 @@ async def synthesis_writer_node(state: dict) -> dict:
             f"## Opening Analysis\n```json\n{_dump(_to_dict(opening_raw))}\n```\n\n"
             f"## Tactical Audit\n```json\n{_dump(_to_dict(tactical_raw))}\n```\n\n"
             f"## Engine Statistics\n```json\n{_dump(state.get('engine_stats', {}))}\n```"
+            f"{_rag_block(state)}"
         )
 
-        result: PlayerSynthesis = await structured_llm.ainvoke(
-            [
-                SystemMessage(content=_SYNTHESIS_SYSTEM_PROMPT),
-                HumanMessage(content=human_content),
-            ]
+        result: PlayerSynthesis = await provider.structured(
+            system=_SYNTHESIS_SYSTEM_PROMPT,
+            human=human_content,
+            schema=PlayerSynthesis,
+            temperature=_TEMPERATURE,
         )
 
         logger.info("Synthesis Writer node completed successfully")
@@ -370,4 +416,4 @@ async def synthesis_writer_node(state: dict) -> dict:
     except Exception as exc:
         error_msg = f"Synthesis Writer failed: {exc!s}"
         logger.exception(error_msg)
-        return {"errors": state.get("errors", []) + [error_msg]}
+        return {"errors": [error_msg]}

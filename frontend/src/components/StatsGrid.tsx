@@ -1,80 +1,50 @@
 "use client";
 
 import React from "react";
-import {
-  Star,
-  BarChart3,
-  Crosshair,
-  AlertTriangle,
-  Users,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
 import { PlayerProfile } from "@/lib/types";
 
 interface StatsGridProps {
   profile: PlayerProfile;
 }
 
-interface StatItem {
-  label: string;
-  value: string | number;
-  icon: React.ReactNode;
-  color: string;
-}
-
 export default function StatsGrid({ profile }: StatsGridProps) {
-  const stats: StatItem[] = [
+  const stats = [
     {
-      label: "Estimated Elo",
+      label: "EST_ELO",
       value: profile.estimated_elo,
-      icon: <Star className="h-5 w-5" />,
-      color: "text-accent",
+      sub: "engine-derived",
     },
     {
-      label: "Games Analyzed",
+      label: "GAMES",
       value: profile.games_analyzed,
-      icon: <BarChart3 className="h-5 w-5" />,
-      color: "text-primary-300",
+      sub: "parsed sample",
     },
     {
-      label: "Avg Centipawn Loss",
+      label: "ACPL",
       value: profile.avg_centipawn_loss.toFixed(1),
-      icon: <Crosshair className="h-5 w-5" />,
-      color: "text-emerald-400",
+      sub: "lower is better",
     },
     {
-      label: "Blunder Rate",
-      value: `${(profile.blunder_rate * 100).toFixed(1)}%`,
-      icon: <AlertTriangle className="h-5 w-5" />,
-      color: "text-rose-400",
-    },
-    {
-      label: "Comparable GM",
-      value: profile.comparable_gm,
-      icon: <Users className="h-5 w-5" />,
-      color: "text-violet-400",
+      label: "BLUNDER_RATE",
+      value: profile.blunder_rate.toFixed(2),
+      sub: "per game",
     },
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       {stats.map((stat) => (
         <div
           key={stat.label}
-          className="glass group flex flex-col items-center rounded-xl p-4 text-center transition-all duration-200 hover:border-slate-600/30"
+          className="border border-term-line bg-term-panel px-3 py-3"
         >
-          <div
-            className={cn(
-              "mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-slate-700/40 transition-colors",
-              stat.color
-            )}
-          >
-            {stat.icon}
-          </div>
-          <div className={cn("text-xl font-bold text-white", stat.color)}>
+          <div className="tlabel">{stat.label}</div>
+          <div className="tnum mt-2 text-2xl leading-none text-term-text">
             {stat.value}
           </div>
-          <div className="mt-1 text-xs text-slate-500">{stat.label}</div>
+          <div className="mt-1 font-mono text-[9px] text-term-faint">
+            {stat.sub}
+          </div>
         </div>
       ))}
     </div>

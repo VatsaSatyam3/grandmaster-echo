@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
-from app.routers import analyze, bot
+from app.routers import analyze, bot, stream
 
 
 @asynccontextmanager
@@ -39,6 +39,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(analyze.router, prefix="/api")
 app.include_router(bot.router, prefix="/api")
+app.include_router(stream.router, prefix="/api")
 
 
 # ── Root & health ─────────────────────────────────────────────────────────────

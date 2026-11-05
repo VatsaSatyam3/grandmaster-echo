@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { IBM_Plex_Mono, Inter } from "next/font/google";
 import "./globals.css";
+
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+  variable: "--font-plex-mono",
+});
 
 const inter = Inter({
   subsets: ["latin"],
@@ -9,9 +16,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Grandmaster Echo — Player Clone & Analyzer",
+  title: "Grandmaster Echo — Analysis Terminal",
   description:
-    "Clone any chess player's style with AI. Analyze openings, strengths, weaknesses, and play against a bot that mimics their moves.",
+    "A multi-agent chess analysis terminal. Ingest a player's games, retrieve tactical patterns with Qdrant, and inspect a grounded, evaluated scouting report.",
 };
 
 export default function RootLayout({
@@ -20,8 +27,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} dark`}>
-      <body className="min-h-screen bg-slate-950 font-sans antialiased">
+    <html lang="en" className={`${plexMono.variable} ${inter.variable}`}>
+      <body className="min-h-screen bg-term-bg font-sans text-term-text antialiased">
         {children}
       </body>
     </html>

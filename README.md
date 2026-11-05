@@ -51,19 +51,36 @@ Grandmaster Echo is an open-source multi-agent analysis engine architected in **
              │                                               │
              └───────────────────────┬───────────────────────┘
                                      ▼
-                   ┌───────────────────────────────────┐
-                   │  LangGraph Profiler Agent Graph   │
-                   │  (Opening Analyst + Tactical      │
-                   │   Auditor ➔ Synthesis Writer)     │
-                   └─────────────────┬─────────────────┘
-                                     │
+                    ┌───────────────────────────────────┐
+                    │  Qdrant RAG Retrieval Loop        │
+                    │  embed move histories → top-k     │
+                    │  semantically similar games        │
+                    └─────────────────┬─────────────────┘
+                                      │ retrieved evidence
+                                      ▼
+                    ┌───────────────────────────────────┐
+                    │  LangGraph Profiler Agent Graph   │
+                    │  Gemini API (OpenAI fallback)     │
+                    │  Opening Analyst + Tactical       │
+                    │  Auditor ➔ Synthesis Writer       │
+                    └─────────────────┬─────────────────┘
+                                      │
+                                      ▼
+                    ┌───────────────────────────────────┐
+                    │  Guardrails + Automated Evals     │
+                    │  grounded against Stockfish       │
+                    └─────────────────┬─────────────────┘
+                                      │
              ┌───────────────────────┴───────────────────────┐
              ▼                                               ▼
 ┌─────────────────────────┐                     ┌─────────────────────────┐
-│ PostgreSQL 16 + pgvector│                     │ Next.js 14 Reactive UI  │
-│ Relational Game & Profile│                    │ Split-View Dashboard &  │
-│ Persistence             │                     │ Playable Clone Canvas   │
+│ PostgreSQL 16           │                     │ Next.js 14 UI           │
+│ Game & Profile Storage  │                     │ Editorial Dossier +     │
+│                         │                     │ Playable Clone Canvas   │
 └─────────────────────────┘                     └─────────────────────────┘
+        ▲
+        │  SSE progress stream (/api/stream/analyze/{username})
+        └──────────────────────────────────────────────────────────────
 ```
 
 ---
@@ -75,13 +92,19 @@ Grandmaster Echo is an open-source multi-agent analysis engine architected in **
    - **Opening Analyst**: Classifies opening repertoire, breadth, and preparation depth.
    - **Tactical Auditor**: Ingests centipawn loss drops ($>2.0$ CP) and phase vulnerabilities.
    - **Synthesis Writer**: Formulates coaching summaries, archetypes, and comparable grandmaster twins.
-3. **Observability & Telemetry**: Full end-to-end tracing via `@observe()` decorators from **Langfuse**.
-4. **Behavior-Cloned Chess Engine**:
+3. **Qdrant RAG Loop**: Every parsed game is embedded (Gemini embeddings, deterministic hash fallback) and indexed in Qdrant. The pipeline retrieves the player's most semantically similar games and injects them as grounded evidence with citations.
+4. **Provider-Agnostic LLM Layer**: Gemini is the primary structured-output provider; LangChain/OpenAI acts as a fallback so local development and CI degrade gracefully.
+5. **LLM Guardrails**: Deterministic checks clamp implausible Elo estimates, reject unsupported certainty, validate blunder-rate consistency, and verify that the narrative references the player's real repertoire.
+6. **Automated Evals**: Each run is scored for schema validity, Elo alignment, opening grounding, citation coverage, and guardrail pass rate against Stockfish-derived ground truth.
+7. **Streaming Pipeline**: `GET /api/stream/analyze/{username}` emits Server-Sent Events for each stage (ingestion, Stockfish, RAG retrieval, agents, guardrails, evals) before delivering the final dossier.
+8. **Observability & Telemetry**: Full end-to-end tracing via `@observe()` decorators from **Langfuse**.
+9. **Behavior-Cloned Chess Engine**:
    - Matches player's historical opening moves via weighted frequency book.
    - Dynamic Stockfish tuning (`UCI_LimitStrength`, `UCI_Elo = player_rating`).
    - Probabilistic blunder sampler injecting human-like inaccuracies according to player's true blunder frequency.
-5. **Modern Reactive Split-View UI**:
-   - Next.js 14 App Router, Tailwind CSS, TypeScript, and `react-chessboard`.
+10. **Editorial Dossier UI**:
+    - Next.js 14 App Router, Tailwind CSS, TypeScript, and `react-chessboard`.
+    - Rule-based editorial layout with serif display type, restrained palette, and cited evidence rather than card-heavy dashboards.
 
 ---
 
@@ -97,12 +120,19 @@ grandmaster-echo/
 │   │   │   └── schemas.py     # Strict Pydantic output schemas
 │   │   ├── routers/
 │   │   │   ├── analyze.py     # POST /api/analyze & GET /api/analyze/{username}
+│   │   │   ├── stream.py      # SSE /api/stream/analyze/{username}
 │   │   │   └── bot.py         # POST /api/bot/move
 │   │   ├── services/
 │   │   │   ├── bot.py         # PlayerCloneBot (opening book + blunder sampler)
+│   │   │   ├── embeddings.py  # Gemini embeddings + deterministic hash fallback
 │   │   │   ├── engine.py      # StockfishAnalyzer (UCI protocol, ACPL)
+│   │   │   ├── evals.py       # Automated evaluation metrics
+│   │   │   ├── guardrails.py  # LLM output validation against Stockfish
 │   │   │   ├── ingestion.py   # Chess.com & Lichess async API clients
-│   │   │   └── parser.py      # python-chess PGN & ECO parser
+│   │   │   ├── llm.py         # Gemini primary + OpenAI fallback provider
+│   │   │   ├── parser.py      # python-chess PGN & ECO parser
+│   │   │   ├── rag.py         # Move-history indexing and retrieval
+│   │   │   └── vector_store.py# Qdrant REST client + in-memory fallback
 │   │   ├── config.py          # Pydantic BaseSettings
 │   │   ├── database.py        # Async SQLAlchemy session manager
 │   │   ├── models.py          # PostgreSQL schema (players, games, evals, profiles)
@@ -115,14 +145,15 @@ grandmaster-echo/
 │   ├── src/
 │   │   ├── app/               # Next.js 14 App Router (layout, page, globals)
 │   │   ├── components/        # PlayerDashboard, ChessBoardPanel, OpeningTable,
-│   │   │                      # StatsGrid, ProfileCard, StrengthWeakness, CoachingPlan
-│   │   └── lib/               # api.ts client, types.ts, utils.ts
+│   │   │                      # StatsGrid, ProfileCard, StrengthWeakness,
+│   │   │                      # CoachingPlan, AnalysisMeta
+│   │   └── lib/               # api.ts (REST + SSE), types.ts, utils.ts
 │   ├── package.json
 │   ├── tailwind.config.ts
 │   └── tsconfig.json
 ├── tests/
 │   └── test_evaluation_harness.py # 20-profile parser alignment verification
-└── docker-compose.yml         # Containerized PostgreSQL 16 + FastAPI + Stockfish
+└── docker-compose.yml         # PostgreSQL 16 + Qdrant + FastAPI + Stockfish
 ```
 
 ---
@@ -131,25 +162,56 @@ grandmaster-echo/
 
 ### 1. Run with Docker Compose
 ```bash
-cd /Applications/grandmaster-echo
-docker-compose up --build
+cd grandmaster-echo
+cp backend/.env.example backend/.env   # add GEMINI_API_KEY
+docker compose up --build
 ```
-- FastAPI Backend will be live at `http://localhost:8000`
+- FastAPI backend at `http://localhost:8000`
 - Interactive Swagger docs at `http://localhost:8000/docs`
+- Qdrant at `http://localhost:6333` (dashboard at `/dashboard`)
+- Frontend at `http://localhost:3000`
 
 ### 2. Run Backend Locally
 ```bash
-cd /Applications/grandmaster-echo/backend
+cd grandmaster-echo/backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env   # set GEMINI_API_KEY and QDRANT_URL
 uvicorn app.main:app --reload --port 8000
 ```
 
+If Qdrant is not running the vector layer falls back to an in-memory store.
+If `GEMINI_API_KEY` is not set the agent nodes fall back to `OPENAI_API_KEY`,
+and the heuristic synthesis path is used when neither provider is available.
+
 ### 3. Run Frontend Locally
 ```bash
-cd /Applications/grandmaster-echo/frontend
+cd grandmaster-echo/frontend
 npm install
 npm run dev
 ```
 Open `http://localhost:3000` to interact with Grandmaster Echo.
+
+### 4. Tests
+```bash
+cd grandmaster-echo/backend
+python -m pytest ../tests -q
+cd ../frontend && npm run build
+```
+
+---
+
+## API Endpoints
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| `POST` | `/api/analyze` | Run the full analysis pipeline |
+| `GET` | `/api/analyze/{username}` | Retrieve a cached dossier |
+| `GET` | `/api/stream/analyze/{username}` | Stream pipeline progress over SSE |
+| `POST` | `/api/bot/move` | Ask the clone bot for a move |
+| `GET` | `/api/health` | Liveness probe |
+
+The analysis response includes `citations`, `guardrails`, `evals`,
+`rag_enabled`, and per-stage `pipeline_ms` so the UI can show the retrieved
+evidence and evaluation scores alongside the written report.
 

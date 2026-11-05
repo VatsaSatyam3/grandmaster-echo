@@ -3,14 +3,13 @@
 @tailwind utilities;
 
 :root {
-  --color-primary: #4F46E5;
-  --color-accent: #F59E0B;
-  --color-surface: #0F172A;
-  --color-card: #1E293B;
-  --color-text: #F1F5F9;
-  --color-text-muted: #94A3B8;
-  --color-success: #10B981;
-  --color-danger: #F43F5E;
+  --term-bg: #08090b;
+  --term-panel: #0e1013;
+  --term-raised: #12151a;
+  --term-line: #23272e;
+  --term-text: #d7dbe0;
+  --term-muted: #8a929e;
+  --term-green: #6ee7a8;
 }
 
 html {
@@ -19,91 +18,87 @@ html {
 }
 
 body {
-  background-color: var(--color-surface);
-  color: var(--color-text);
+  background-color: var(--term-bg);
+  color: var(--term-text);
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+  background-size: 56px 56px;
+  background-position: center top;
 }
 
-/* Custom Scrollbar */
+::selection {
+  background: var(--term-green);
+  color: #08090b;
+}
+
+/* Terminal labels */
+.tlabel {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--term-muted);
+}
+
+.tnum {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Panel header bar */
+.panel-bar {
+  border-bottom: 1px solid var(--term-line);
+  background: var(--term-raised);
+}
+
+/* Faint divider row used inside panels */
+.row-line {
+  border-bottom: 1px solid var(--term-line);
+}
+.row-line:last-child {
+  border-bottom: 0;
+}
+
+/* Subtle terminal scanline, extremely restrained */
+.scan {
+  position: relative;
+}
+.scan::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.08) 3px,
+    rgba(0, 0, 0, 0.08) 4px
+  );
+  opacity: 0.25;
+}
+
+/* Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
 }
-
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.5);
+  background: #0b0d10;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: rgba(79, 70, 229, 0.4);
-  border-radius: 3px;
+  background: #2a3038;
+  border: 2px solid #0b0d10;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(79, 70, 229, 0.7);
+  background: #3a424d;
 }
 
-/* Glowing card border animation */
-@keyframes glow-border {
-  0%, 100% {
-    border-color: rgba(79, 70, 229, 0.2);
-    box-shadow: 0 0 10px rgba(79, 70, 229, 0.05);
-  }
-  50% {
-    border-color: rgba(79, 70, 229, 0.5);
-    box-shadow: 0 0 20px rgba(79, 70, 229, 0.15);
-  }
-}
-
-.glow-card {
-  animation: glow-border 4s ease-in-out infinite;
-  border: 1px solid rgba(79, 70, 229, 0.2);
-}
-
-/* Glass morphism base */
-.glass {
-  background: rgba(30, 41, 59, 0.5);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(148, 163, 184, 0.1);
-}
-
-/* Win rate bar segments */
-.win-bar {
-  display: flex;
-  height: 8px;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-/* Pulse dot */
-.pulse-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  animation: pulse-glow 2s ease-in-out infinite;
-}
-
-@keyframes pulse-glow {
-  0%, 100% {
-    opacity: 0.5;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.3);
-  }
-}
-
-/* Focus styles */
-input:focus,
-select:focus,
-button:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+input:focus-visible,
+button:focus-visible,
+select:focus-visible {
+  outline: 1px solid var(--term-green);
+  outline-offset: 1px;
 }

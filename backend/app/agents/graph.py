@@ -71,6 +71,7 @@ class GraphState(BaseModel):
     engine_stats: dict = Field(default_factory=dict)
     game_analyses: list[dict] = Field(default_factory=list)
     total_games: int = 0
+    rag_context: list[dict] = Field(default_factory=list)
 
     # ── Node outputs ─────────────────────────────────────────────────────
     opening_analysis: OpeningAnalysis | None = None
@@ -141,6 +142,7 @@ async def run_profiler_graph(
     engine_stats: dict,
     game_analyses: list[dict],
     total_games: int,
+    rag_context: list[dict] | None = None,
 ) -> GraphState:
     """Build the initial state and execute the full profiler graph.
 
@@ -186,6 +188,7 @@ async def run_profiler_graph(
         "engine_stats": engine_stats,
         "game_analyses": game_analyses,
         "total_games": total_games,
+        "rag_context": rag_context or [],
         "errors": [],
     }
 

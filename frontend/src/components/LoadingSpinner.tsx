@@ -1,67 +1,112 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Crown } from "lucide-react";
+import { StreamStage } from "@/lib/types";
 
 interface LoadingSpinnerProps {
   username?: string;
+  stage?: StreamStage | null;
 }
 
-const STEPS = [
-  "Connecting to platform API...",
-  "Ingesting up to 200 recent games...",
-  "Parsing PGNs & extracting ECO repertoire...",
-  "Running Stockfish 16 static engine evaluations...",
-  "Computing ACPL and phase blunder distribution...",
-  "Synthesizing tactical profile via LangGraph agents...",
-  "Building playable clone bot parameters...",
+const STEPS: { stage: StreamStage; label: string }[] = [
+  { stage: "ingesting", label: "FETCH GAMES" },
+  { stage: "parsing", label: "PARSE PGN / ECO" },
+  { stage: "engine", label: "STOCKFISH EVAL" },
+  { stage: "rag_indexing", label: "EMBED → QDRANT" },
+  { stage: "rag_retrieval", label: "SEMANTIC RETRIEVAL" },
+  { stage: "agents", label: "LANGGRAPH AGENTS" },
+  { stage: "guardrails", label: "GUARDRAIL CHECK" },
+  { stage: "evals", label: "SCORE REPORT" },
 ];
 
-export default function LoadingSpinner({ username }: LoadingSpinnerProps) {
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+const BAR_WIDTH = 28;
+
+export default function LoadingSpinner({ username, stage }: LoadingSpinnerProps) {
+  const [fallbackIndex, setFallbackIndex] = useState(0);
 
   useEffect(() => {
+    if (stage) return;
     const interval = setInterval(() => {
-      setCurrentStepIndex((prev) => (prev + 1) % STEPS.length);
-    }, 2400);
+      setFallbackIndex((prev) => Math.min(prev + 1, STEPS.length - 1));
+    }, 2200);
     return () => clearInterval(interval);
-  }, []);
+  }, [stage]);
+
+  const activeIndex = stage
+    ? Math.max(
+        0,
+        STEPS.findIndex((step) => step.stage === stage)
+      )
+    : fallbackIndex;
+
+  const progress = Math.round(((activeIndex + 1) / STEPS.length) * 100);
+  const filled = Math.round((progress / 100) * BAR_WIDTH);
 
   return (
-    <div className="flex flex-col items-center justify-center p-8 text-center animate-fade-in">
-      <div className="relative mb-6 flex h-20 w-20 items-center justify-center">
-        {/* Pulsing glow ring */}
-        <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
-        <div className="absolute inset-0 rounded-full border-2 border-primary/40 border-t-primary animate-spin" />
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-slate-900 border border-slate-700/60 shadow-xl">
-          <Crown className="h-7 w-7 text-primary animate-pulse" />
+    <div className="w-full max-w-lg animate-fade-up px-4">
+      <div className="border border-term-line bg-term-panel">
+        <div className="panel-bar flex items-center justify-between px-3 py-2 font-mono text-[10px] tracking-wider">
+          <div className="flex items-center gap-2 text-term-muted">
+            <span className="text-term-green">●</span>
+            <span>GME://BOOT</span>
+          </div>
+          <span className="text-term-faint">RUNNING</span>
         </div>
-      </div>
 
-      <h3 className="text-xl font-bold text-white mb-2">
-        {username ? `Analyzing ${username}'s Chess Soul` : "Profiling Player"}
-      </h3>
-      
-      <p className="text-sm text-slate-400 max-w-md h-6 transition-all duration-300">
-        {STEPS[currentStepIndex]}
-      </p>
+        <div className="p-4 font-mono text-[11px]">
+          <div className="text-term-muted">
+            <span className="text-term-green">$</span> gme analyze --player{" "}
+            <span className="text-term-text">{username || "—"}</span>
+          </div>
 
-      {/* Progress dots */}
-      <div className="flex gap-1.5 mt-5">
-        {STEPS.map((_, i) => (
-          <span
-            key={i}
-            className={`h-1.5 rounded-full transition-all duration-300 ${
-              i === currentStepIndex
-                ? "w-6 bg-primary"
-                : i < currentStepIndex
-                ? "w-2 bg-primary/50"
-                : "w-2 bg-slate-800"
-            }`}
-          />
-        ))}
+          <div className="mt-3 space-y-1.5">
+            {STEPS.map((step, index) => {
+              const done = index < activeIndex;
+              const active = index === activeIndex;
+              return (
+                <div key={step.stage} className="flex items-center gap-2">
+                  <span
+                    className={
+                      done
+                        ? "text-term-green"
+                        : active
+                        ? "text-term-amber"
+                        : "text-term-faint"
+                    }
+                  >
+                    {done ? "[ OK ]" : active ? "[ >> ]" : "[ -- ]"}
+                  </span>
+                  <span
+                    className={
+                      active
+                        ? "text-term-text"
+                        : done
+                        ? "text-term-muted"
+                        : "text-term-faint"
+                    }
+                  >
+                    {step.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 flex items-center gap-3 text-[11px]">
+            <span className="text-term-green">
+              {"█".repeat(filled)}
+              <span className="text-term-line-bright">
+                {"░".repeat(BAR_WIDTH - filled)}
+              </span>
+            </span>
+            <span className="text-term-muted">{progress}%</span>
+          </div>
+
+          <div className="mt-3 border-t border-term-line pt-2 text-[9px] leading-4 text-term-faint">
+            // output is grounded in Stockfish evaluations and retrieved games
+          </div>
+        </div>
       </div>
     </div>
   );
 }
-

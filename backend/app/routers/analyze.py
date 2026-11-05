@@ -1,16 +1,21 @@
 """Routes for player analysis pipeline."""
 
 import logging
+import time
+from collections.abc import Awaitable, Callable
 from typing import Any
+
 import chess
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.database import get_db
+from app.database import engine, get_db
 from app.models import (
     Game as GameModel,
     GameEval as GameEvalModel,
@@ -21,18 +26,35 @@ from app.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
     CoachingStep,
+    EvalMetrics,
+    GuardrailResult,
     OpeningStats,
     PlayerProfile,
     PlayerResponse,
+    RAGCitation,
 )
 from app.services.engine import StockfishAnalyzer
+from app.services.evals import run_evals
+from app.services.guardrails import apply_guardrails, sanitize_text
 from app.services.ingestion import ChessGameIngester
+from app.services.llm import provider
 from app.services.parser import PGNParser, ParsedGame
+from app.services.rag import MoveHistoryRAG, build_retrieval_query, to_citations
 from app.agents.graph import run_profiler_graph
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/analyze", tags=["analyze"])
+
+# Progress callback used by the SSE router.
+EmitFn = Callable[[str, dict[str, Any]], Awaitable[None]] | None
+
+
+async def _emit(emit: EmitFn, stage: str, **payload: Any) -> None:
+    """Emit a progress event if a streaming consumer is attached."""
+    if emit is not None:
+        await emit(stage, payload)
+
 
 
 SAMPLE_FALLBACK_PGNS = [
@@ -112,13 +134,22 @@ def _generate_synthetic_evaluations(game: ParsedGame):
     return evals
 
 
-@router.post("", status_code=202, response_model=AnalyzeResponse)
-@router.post("/", status_code=202, response_model=AnalyzeResponse)
-async def analyze_player(
+async def _run_pipeline(
     request: AnalyzeRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession,
+    emit: EmitFn = None,
 ) -> AnalyzeResponse:
-    """Trigger a full analysis pipeline for a player."""
+    """Execute the full ingestion → engine → RAG → agents → evals pipeline."""
+    t_start = time.perf_counter()
+    timings: dict[str, float] = {}
+    lap_start = t_start
+
+    def lap(name: str) -> None:
+        nonlocal lap_start
+        now = time.perf_counter()
+        timings[name] = round((now - lap_start) * 1000, 2)
+        lap_start = now
+
     norm_username = request.username.strip()
     norm_platform = "chesscom" if "chess" in request.platform.lower() else "lichess"
 
@@ -129,11 +160,30 @@ async def analyze_player(
     player = result.scalar_one_or_none()
 
     if player is None:
-        player = PlayerModel(username=norm_username, platform=norm_platform, current_rating=1550)
-        db.add(player)
-        await db.flush()
+        insert_fn = (
+            pg_insert if engine.dialect.name == "postgresql" else sqlite_insert
+        )
+        await db.execute(
+            insert_fn(PlayerModel)
+            .values(
+                username=norm_username,
+                platform=norm_platform,
+                current_rating=1550,
+            )
+            .on_conflict_do_nothing(index_elements=["username"])
+        )
+        result = await db.execute(
+            select(PlayerModel).where(PlayerModel.username.ilike(norm_username))
+        )
+        player = result.scalar_one()
+
+    # Commit the player identity before the long-running LLM/engine phase.
+    # Holding an open SQLite write transaction across external calls would
+    # block every concurrent analysis ("database is locked").
+    await db.commit()
 
     # 2. Ingest raw PGNs
+    await _emit(emit, "ingesting", platform=norm_platform, username=norm_username)
     raw_pgns: list[str] = []
     try:
         async with ChessGameIngester(platform=norm_platform, username=norm_username) as ingester:
@@ -144,8 +194,10 @@ async def analyze_player(
     if not raw_pgns:
         logger.info("Using representative sample games for %s", norm_username)
         raw_pgns = [pgn.replace("{username}", norm_username) for pgn in SAMPLE_FALLBACK_PGNS]
+    lap("ingest_ms")
 
     # 3. Parse games
+    await _emit(emit, "parsing", games=len(raw_pgns))
     parser = PGNParser(player_username=norm_username)
     parsed_games: list[ParsedGame] = parser.parse_batch(raw_pgns)
 
@@ -153,8 +205,10 @@ async def analyze_player(
         # Fallback to sample games if user PGNs could not be parsed
         raw_pgns = [pgn.replace("{username}", norm_username) for pgn in SAMPLE_FALLBACK_PGNS]
         parsed_games = parser.parse_batch(raw_pgns)
+    lap("parse_ms")
 
     # 4. Engine Analysis
+    await _emit(emit, "engine", games=len(parsed_games))
     game_analyses = []
     stockfish_available = False
     try:
@@ -165,6 +219,7 @@ async def analyze_player(
                 game_analyses.append(ga)
     except Exception as exc:
         logger.info("Stockfish engine not reachable (%s); utilizing heuristic evaluator.", exc)
+    lap("engine_ms")
 
     # Calculate aggregate engine stats
     total_blunders = 0
@@ -199,10 +254,41 @@ async def analyze_player(
 
     white_stats = PGNParser.compute_opening_stats(white_openings)
     black_stats = PGNParser.compute_opening_stats(black_openings)
+    lap("openings_ms")
+
+    # 5b. RAG: index move histories and retrieve similar games.
+    rag_enabled = bool(settings.ENABLE_RAG)
+    rag_context: list[dict[str, Any]] = []
+    citations: list[RAGCitation] = []
+    if rag_enabled:
+        await _emit(emit, "rag_indexing", games=len(parsed_games))
+        try:
+            rag = MoveHistoryRAG()
+            indexed = await rag.index_games(
+                parsed_games, username=norm_username, platform=norm_platform
+            )
+            query = build_retrieval_query(
+                username=norm_username, opening_stats=raw_opening_stats
+            )
+            await _emit(emit, "rag_retrieval", query=query, indexed=indexed)
+            retrieved = await rag.retrieve(query, username=norm_username)
+            rag_context = [game.as_context() for game in retrieved]
+            citations = [RAGCitation(**item) for item in to_citations(retrieved)]
+            logger.info(
+                "RAG retrieved %d games for %s (indexed=%d)",
+                len(retrieved), norm_username, indexed,
+            )
+        except Exception as exc:
+            logger.warning("RAG pipeline degraded (%s); continuing without retrieval", exc)
+            rag_enabled = False
+            rag_context = []
+            citations = []
+    lap("rag_ms")
 
     # 6. Run LangGraph Multi-Agent Profiler
+    await _emit(emit, "agents", rag_documents=len(rag_context))
     agent_state = None
-    if settings.OPENAI_API_KEY:
+    if provider.available:
         try:
             agent_state = await run_profiler_graph(
                 username=norm_username,
@@ -212,9 +298,11 @@ async def analyze_player(
                 engine_stats=engine_stats,
                 game_analyses=[{"game_id": g.game_id, "moves": g.num_moves} for g in parsed_games],
                 total_games=len(parsed_games),
+                rag_context=rag_context,
             )
         except Exception as exc:
             logger.warning("LangGraph agent execution encountered error: %s", exc)
+    lap("agents_ms")
 
     # Synthesize profile
     if agent_state and agent_state.player_synthesis:
@@ -260,29 +348,69 @@ async def analyze_player(
         estimated_elo = engine_stats["estimated_elo"]
         coaching_plan_text = "Step 1: Repertoire refinement. Step 2: Middlegame pawn structure drills. Step 3: Theoretical rook endgames."
 
-    # 7. Persist Games & Profile in DB
-    existing_result = await db.execute(
-        select(GameModel.game_id).where(GameModel.player_id == player.id)
+    # 6b. Guardrails: validate generated prose against Stockfish ground truth.
+    await _emit(emit, "guardrails")
+    opening_names = [
+        item.get("name", "") for item in raw_opening_stats if item.get("name")
+    ]
+    stockfish_elo = int(engine_stats["estimated_elo"])
+    guardrail_result, safe_elo = apply_guardrails(
+        estimated_elo=int(estimated_elo),
+        stockfish_elo=stockfish_elo,
+        executive_summary=summary_text or "",
+        opening_names=opening_names,
+        blunder_rate=float(blunder_rate),
+        engine_blunder_rate=float(engine_stats["blunder_rate"]),
     )
-    existing_game_ids = set(existing_result.scalars().all())
+    estimated_elo = safe_elo
+    summary_text = sanitize_text(summary_text or "")
+    lap("guardrails_ms")
 
-    for g in parsed_games:
-        if g.game_id and g.game_id in existing_game_ids:
-            continue
-        if g.game_id:
-            existing_game_ids.add(g.game_id)
-        game_row = GameModel(
-            player_id=player.id,
-            game_id=g.game_id,
-            pgn=g.pgn,
-            opening_eco=g.opening_eco,
-            opening_name=g.opening_name,
-            result=g.result,
-            time_control=g.time_control,
-            played_as=g.played_as,
-            num_moves=g.num_moves,
+    # 6c. Automated evals against deterministic engine outputs.
+    await _emit(emit, "evals")
+    elapsed_ms = round((time.perf_counter() - t_start) * 1000, 2)
+    eval_metrics: EvalMetrics = run_evals(
+        estimated_elo=int(estimated_elo),
+        stockfish_elo=stockfish_elo,
+        executive_summary=summary_text,
+        opening_names=opening_names,
+        citation_count=len(citations),
+        top_k=settings.RAG_TOP_K,
+        guardrail_passed=guardrail_result.passed,
+        strengths=strengths,
+        weaknesses=weaknesses,
+        priorities=priorities,
+        latency_ms=elapsed_ms,
+    )
+    lap("evals_ms")
+
+    # 7. Persist Games & Profile in DB.
+    # Games are inserted idempotently: concurrent analyses and repeat runs
+    # must not collide on the globally-unique game_id.
+    game_rows = [
+        {
+            "player_id": player.id,
+            "game_id": g.game_id,
+            "pgn": g.pgn,
+            "opening_eco": g.opening_eco,
+            "opening_name": g.opening_name,
+            "result": g.result,
+            "time_control": g.time_control,
+            "played_as": g.played_as,
+            "num_moves": g.num_moves,
+        }
+        for g in parsed_games
+        if g.game_id
+    ]
+    if game_rows:
+        insert_fn = (
+            pg_insert if engine.dialect.name == "postgresql" else sqlite_insert
         )
-        db.add(game_row)
+        await db.execute(
+            insert_fn(GameModel)
+            .values(game_rows)
+            .on_conflict_do_nothing(index_elements=["game_id"])
+        )
 
     profile_row = PlayerProfileModel(
         player_id=player.id,
@@ -363,6 +491,8 @@ async def analyze_player(
         games_analyzed=len(parsed_games),
     )
 
+    timings["total_ms"] = round((time.perf_counter() - t_start) * 1000, 2)
+
     return AnalyzeResponse(
         player=PlayerResponse(
             id=player.id,
@@ -375,7 +505,22 @@ async def analyze_player(
         games_analyzed=len(parsed_games),
         openings=formatted_openings,
         coaching_plan=coaching_steps,
+        citations=citations,
+        rag_enabled=rag_enabled,
+        guardrails=guardrail_result,
+        evals=eval_metrics,
+        pipeline_ms=timings,
     )
+
+
+@router.post("", status_code=202, response_model=AnalyzeResponse)
+@router.post("/", status_code=202, response_model=AnalyzeResponse)
+async def analyze_player(
+    request: AnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AnalyzeResponse:
+    """Trigger a full analysis pipeline for a player."""
+    return await _run_pipeline(request, db)
 
 
 @router.get("/{username}", response_model=AnalyzeResponse)

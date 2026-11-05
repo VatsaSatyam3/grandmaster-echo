@@ -11,8 +11,11 @@ from sqlalchemy.orm import declarative_base
 
 from app.config import settings
 
-engine_kwargs = {"echo": False}
-if "sqlite" not in settings.DATABASE_URL:
+engine_kwargs: dict = {"echo": False}
+if "sqlite" in settings.DATABASE_URL:
+    # Wait for concurrent writers instead of failing immediately.
+    engine_kwargs["connect_args"] = {"timeout": 30}
+else:
     engine_kwargs.update({
         "pool_pre_ping": True,
         "pool_size": 5,

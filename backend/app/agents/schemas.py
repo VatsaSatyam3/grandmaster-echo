@@ -131,6 +131,8 @@ class ProfilerState(BaseModel):
     engine_stats: dict = Field(default_factory=dict)
     game_analyses: list[dict] = Field(default_factory=list)
     total_games: int = 0
+    # Retrieved similar games from the Qdrant RAG loop.
+    rag_context: list[dict] = Field(default_factory=list)
 
     # ── Node outputs (populated as the graph executes) ───────────────────
     opening_analysis: OpeningAnalysis | None = None

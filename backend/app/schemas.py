@@ -120,6 +120,50 @@ class PlayerProfile(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ── RAG / guardrails / evals ──────────────────────────────────────────────────
+
+
+class RAGCitation(BaseModel):
+    """A retrieved game that grounded the generated analysis."""
+
+    game_id: str
+    opening: str = "Unknown"
+    eco: str = "A00"
+    result: str = "unknown"
+    played_as: str = "white"
+    score: float = 0.0
+    excerpt: str = ""
+
+
+class GuardrailIssue(BaseModel):
+    """A single guardrail finding."""
+
+    rule: str
+    message: str
+    severity: Literal["info", "warning", "error"] = "warning"
+    corrected: bool = False
+
+
+class GuardrailResult(BaseModel):
+    """Outcome of the LLM output guardrail layer."""
+
+    passed: bool = True
+    checks_run: int = 0
+    issues: list[GuardrailIssue] = Field(default_factory=list)
+
+
+class EvalMetrics(BaseModel):
+    """Automated evaluation scores for one analysis run."""
+
+    overall: float = 0.0
+    schema_validity: float = 0.0
+    elo_alignment: float = 0.0
+    opening_grounding: float = 0.0
+    citation_coverage: float = 0.0
+    guardrail_pass: float = 0.0
+    latency_ms: float = 0.0
+
+
 # ── Analyze request / response ────────────────────────────────────────────────
 
 
@@ -138,6 +182,11 @@ class AnalyzeResponse(BaseModel):
     games_analyzed: int
     openings: list[OpeningStats] = Field(default_factory=list)
     coaching_plan: list[CoachingStep] = Field(default_factory=list)
+    citations: list[RAGCitation] = Field(default_factory=list)
+    rag_enabled: bool = False
+    guardrails: GuardrailResult = Field(default_factory=GuardrailResult)
+    evals: EvalMetrics = Field(default_factory=EvalMetrics)
+    pipeline_ms: dict[str, float] = Field(default_factory=dict)
 
 
 # ── Bot ───────────────────────────────────────────────────────────────────────

@@ -2,54 +2,53 @@
 
 import React from "react";
 import { CoachingStep } from "@/lib/types";
-import { Target, Compass, ChevronRight } from "lucide-react";
 
 interface CoachingPlanProps {
   steps?: CoachingStep[];
   priorities?: string[];
 }
 
-export default function CoachingPlan({ steps = [], priorities = [] }: CoachingPlanProps) {
-  // If steps array is empty, generate from priorities
+export default function CoachingPlan({
+  steps = [],
+  priorities = [],
+}: CoachingPlanProps) {
   const normalizedSteps: CoachingStep[] =
     steps.length > 0
       ? steps
-      : priorities.map((p, idx) => ({
-          step: idx + 1,
-          title: `Focus Phase ${idx + 1}`,
-          description: p,
+      : priorities.map((priority, index) => ({
+          step: index + 1,
+          title: `FOCUS_PHASE_${index + 1}`,
+          description: priority,
         }));
 
   if (normalizedSteps.length === 0) {
     return (
-      <div className="p-4 text-xs text-slate-500 italic">
-        No tailored coaching roadmap generated yet.
-      </div>
+      <p className="font-mono text-[11px] text-term-faint">
+        // no coaching roadmap generated
+      </p>
     );
   }
 
   return (
-    <div className="space-y-3">
+    <ol className="border-t border-term-line">
       {normalizedSteps.map((item) => (
-        <div
+        <li
           key={item.step}
-          className="flex items-start gap-3.5 p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-slate-700/80 transition-all group"
+          className="flex items-start gap-3 border-b border-term-line px-1 py-3 last:border-b-0"
         >
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary-300 font-bold text-xs ring-1 ring-primary/30">
-            {item.step}
-          </div>
-          <div className="flex-1">
-            <h4 className="text-xs font-semibold text-white group-hover:text-primary-300 transition-colors flex items-center gap-1.5">
-              <span>{item.title}</span>
-              <ChevronRight className="w-3 h-3 text-slate-600 group-hover:text-primary-400 group-hover:translate-x-0.5 transition-all" />
+          <span className="mt-px shrink-0 border border-term-line px-1.5 py-0.5 font-mono text-[10px] text-term-green">
+            {String(item.step).padStart(2, "0")}
+          </span>
+          <div>
+            <h4 className="font-mono text-[11px] tracking-wide text-term-text">
+              {item.title.toUpperCase()}
             </h4>
-            <p className="mt-1 text-xs text-slate-400 leading-relaxed">
+            <p className="mt-1 text-[12.5px] leading-5 text-term-muted">
               {item.description}
             </p>
           </div>
-        </div>
+        </li>
       ))}
-    </div>
+    </ol>
   );
 }
-
